@@ -191,7 +191,7 @@ export default function StaffDashboard() {
               <div style={{
                 background: 'rgba(0,212,255,0.04)', border: '1px solid rgba(0,212,255,0.2)',
                 borderRadius: '12px', padding: '20px', position: 'relative',
-              }}>
+              }} aria-live="polite">
                 <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--cyan)', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: '10px' }}>
                   ⚡ AI OPERATIONAL INSIGHT
                 </div>
@@ -238,6 +238,7 @@ export default function StaffDashboard() {
                       {alert.level.toUpperCase()}
                     </span>
                     <button
+                      aria-label="Dismiss alert"
                       onClick={() => setDismissedAlerts(p => [...p, alert.id])}
                       style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '14px', lineHeight: 1 }}
                     >

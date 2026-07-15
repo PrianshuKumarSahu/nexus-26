@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 
 interface Match {
   id: string;
@@ -58,7 +58,7 @@ const MATCHES: Match[] = [
 export default function MatchSchedule() {
   const [filter, setFilter] = useState<'all' | 'live' | 'upcoming' | 'finished'>('all');
 
-  const filtered = MATCHES.filter(m => filter === 'all' || m.status === filter);
+  const filtered = useMemo(() => MATCHES.filter(m => filter === 'all' || m.status === filter), [filter]);
 
   const statusColor: Record<string, string> = {
     live:     'var(--red)',

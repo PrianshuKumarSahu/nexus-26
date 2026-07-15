@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 
 interface Zone {
   id: string;
@@ -42,8 +42,8 @@ export default function StadiumMap() {
   const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
   const [filter, setFilter] = useState<'all' | 'clear' | 'moderate' | 'congested'>('all');
 
-  const filtered = ZONES.filter(z => filter === 'all' || z.status === filter);
-  const avgDensity = Math.round(ZONES.reduce((s, z) => s + z.density, 0) / ZONES.length);
+  const filtered = useMemo(() => ZONES.filter(z => filter === 'all' || z.status === filter), [filter]);
+  const avgDensity = useMemo(() => Math.round(ZONES.reduce((s, z) => s + z.density, 0) / ZONES.length), []);
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '32px 24px 80px' }}>
@@ -94,6 +94,7 @@ export default function StadiumMap() {
             <svg
               viewBox="0 0 500 420"
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+              role="img"
               aria-label="Stadium crowd density map"
             >
               {/* ── Stand fill (outer ellipse) ── */}
@@ -213,7 +214,7 @@ export default function StadiumMap() {
                 }}>
                   {selectedZone.status === 'clear' ? '🟢' : selectedZone.status === 'moderate' ? '🟡' : '🔴'} {selectedZone.status.toUpperCase()}
                 </span>
-                <button onClick={() => setSelectedZone(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '20px', lineHeight: 1 }}>✕</button>
+                <button aria-label="Close zone details" onClick={() => setSelectedZone(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '20px', lineHeight: 1 }}>✕</button>
               </div>
 
               <h3 style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: '22px', color: 'var(--text-primary)', marginBottom: '4px' }}>

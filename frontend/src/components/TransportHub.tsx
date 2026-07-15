@@ -106,14 +106,14 @@ export default function TransportHub() {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '1px', textTransform: 'uppercase' }}>To</label>
             <input className="input-field" value={to} onChange={e => setTo(e.target.value)} />
           </div>
-          <button className="btn-primary" onClick={getAITransportTip} disabled={loadingTip} style={{ padding: '12px 24px', whiteSpace: 'nowrap', opacity: loadingTip ? 0.6 : 1, flexShrink: 0 }}>
+          <button className="btn-primary" aria-label="Generate AI transport tip" onClick={getAITransportTip} disabled={loadingTip} style={{ padding: '12px 24px', whiteSpace: 'nowrap', opacity: loadingTip ? 0.6 : 1, flexShrink: 0 }}>
             {loadingTip ? '⏳ Loading...' : '🤖 AI Plan'}
           </button>
         </div>
 
         {/* AI Tip */}
         {aiTip && (
-          <div style={{
+          <div aria-live="polite" style={{
             marginTop: '20px', background: 'rgba(0,230,118,0.06)',
             border: '1px solid rgba(0,230,118,0.2)', borderRadius: '12px', padding: '16px',
           }}>

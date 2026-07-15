@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import Navbar from './components/Navbar';
 import HeroSection from './components/HeroSection';
 import ChatInterface from './components/ChatInterface';
@@ -21,12 +21,12 @@ function App() {
   const [role, setRole] = useState<'fan' | 'staff'>('fan');
 
   /** Navigate to a view and update the role context if needed */
-  const navigateTo = (view: ViewType) => {
+  const navigateTo = useCallback((view: ViewType) => {
     setActiveView(view);
     if (view === 'staff') setRole('staff');
     else setRole('fan');
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  }, []);
 
   const renderView = () => {
     switch (activeView) {

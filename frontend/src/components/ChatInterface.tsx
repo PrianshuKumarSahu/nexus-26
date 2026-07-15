@@ -214,6 +214,7 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
         <div
           className="scroll-inner"
           style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}
+          aria-live="polite"
         >
           {messages.map(msg => (
             <div key={msg.id} style={{ display: 'flex', justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start' }}>
@@ -287,6 +288,7 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
               onClick={handleSend}
               disabled={isLoading || !input.trim()}
               className="btn-primary"
+              aria-label="Send message"
               style={{
                 padding: '12px 20px',
                 fontSize: '18px',

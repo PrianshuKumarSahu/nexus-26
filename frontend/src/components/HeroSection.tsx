@@ -1,60 +1,9 @@
-import { useEffect, useRef } from 'react';
+
 
 type ViewType = 'home' | 'chat' | 'map' | 'schedule' | 'transport' | 'staff' | 'accessibility';
 
 interface HeroProps {
   onNavigate: (view: ViewType) => void;
-}
-
-/** Animated stat counter component */
-function StatCounter({ value, label, suffix = '' }: { value: number; label: string; suffix?: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!ref.current) return;
-    let start = 0;
-    const end = value;
-    const duration = 2000;
-    const startTime = performance.now();
-    const tick = (now: number) => {
-      const elapsed = now - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      const current = Math.round(start + (end - start) * eased);
-      if (ref.current) ref.current.textContent = current.toLocaleString() + suffix;
-      if (progress < 1) requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }, [value, suffix]);
-
-  return (
-    <div style={{ textAlign: 'center' }}>
-      <div
-        ref={ref}
-        style={{
-          fontFamily: "'Orbitron', monospace",
-          fontSize: 'clamp(20px, 2.5vw, 36px)',
-          fontWeight: 900,
-          color: 'var(--primary)',
-          lineHeight: 1,
-          textShadow: '0 0 30px var(--primary-glow)',
-        }}
-      >
-        0
-      </div>
-      <div style={{
-        fontFamily: "'Rajdhani', sans-serif",
-        fontSize: '12px',
-        fontWeight: 600,
-        letterSpacing: '1.5px',
-        textTransform: 'uppercase',
-        color: 'var(--text-muted)',
-        marginTop: '6px',
-      }}>
-        {label}
-      </div>
-    </div>
-  );
 }
 
 /**
