@@ -1,40 +1,46 @@
-import express from 'express';
-import cors from 'cors';
+/**
+ * @fileoverview Express application entry point for the FIFA 26 Smart Assist API.
+ *
+ * Imports the configured app instance and starts the HTTP server with
+ * graceful shutdown support for SIGTERM and SIGINT signals.
+ *
+ * @module index
+ */
+
 import dotenv from 'dotenv';
-import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
-import chatRoutes from './routes/chatRoutes';
+import app from './app';
+import { logger } from './utils/logger';
 
 dotenv.config();
 
-const app = express();
 const port = process.env.PORT || 3001;
 
-// Security Middlewares
-app.use(helmet()); // Sets 15+ secure HTTP headers
-app.use(cors());
-app.use(express.json());
+// ── Server Startup ────────────────────────────────────────────────────────────
+/**
+ * Starts the HTTP server and registers graceful shutdown handlers
+ * for SIGTERM and SIGINT signals (e.g. container stop, Ctrl-C).
+ */
+const startServer = (): void => {
+  const server = app.listen(port, () => {
+    logger.info('FIFA 26 Smart Assist API started', { port });
+  });
 
-// Rate Limiting to prevent DDoS / brute-force on Gemini API
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
-  message: { error: 'Too many requests, please try again later.' },
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-});
+  /**
+   * Gracefully shuts down the server by stopping new connections
+   * and allowing in-flight requests to complete.
+   *
+   * @param signal - The received OS signal name.
+   */
+  const gracefulShutdown = (signal: string): void => {
+    logger.info(`${signal} received — shutting down gracefully`);
+    server.close(() => {
+      logger.info('Server closed. Exiting process.');
+      process.exit(0);
+    });
+  };
 
-app.use('/api/', apiLimiter);
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+};
 
-// Routes
-app.use('/api/chat', chatRoutes);
-
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', message: 'FIFA 26 Smart Assist API is running' });
-});
-
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
-});
-
-export default app;
+startServer();

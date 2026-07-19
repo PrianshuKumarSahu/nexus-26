@@ -1,25 +1,104 @@
 /**
- * AIService — FIFA 26 Smart Assist GenAI Backend
+ * @fileoverview AIService — FIFA 26 Smart Assist GenAI Backend
  *
  * Primary: Google Gemini 1.5 Flash via @google/generative-ai SDK
  * Fallback: High-quality mock engine (used when no API key is configured)
  *
  * The service is role-aware (fan / staff), multilingual, and domain-scoped
  * to FIFA World Cup 2026 stadium operations.
+ *
+ * @module AIService
  */
 
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import {
+  CACHE_TTL_MS,
+  GEMINI_KEY_PLACEHOLDER,
+  GEMINI_MODEL_ID,
+  DEFAULT_ROLE,
+  DEFAULT_LANGUAGE,
+} from '../constants';
+import { logger } from '../utils/logger';
+
+// ── Response cache ─────────────────────────────────────────────────────────────
+
+interface CacheEntry {
+  response: string;
+  expiresAt: number;
+}
+
+/** In-memory response cache keyed by `role:language:message` */
+const responseCache = new Map<string, CacheEntry>();
+
+/**
+ * Retrieves a cached response if it exists and has not expired.
+ * @param key - Cache key string.
+ * @returns The cached response string, or null if not found / expired.
+ */
+const getCached = (key: string): string | null => {
+  const entry = responseCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    responseCache.delete(key);
+    return null;
+  }
+  return entry.response;
+};
+
+/**
+ * Stores a response in the cache with a TTL.
+ * @param key - Cache key string.
+ * @param response - The AI response string to cache.
+ */
+const setCached = (key: string, response: string): void => {
+  responseCache.set(key, { response, expiresAt: Date.now() + CACHE_TTL_MS });
+};
+
+/**
+ * Clears all entries from the response cache.
+ * Useful for testing to ensure a clean state between runs.
+ */
+export const clearResponseCache = (): void => {
+  responseCache.clear();
+};
+
+// ── Keyword patterns pre-compiled for efficiency ──────────────────────────────
+/** Pre-compiled keyword sets for categorisation — avoids re-creation on every call */
+const STAFF_KEYWORDS = {
+  crowd:     ['crowd', 'density', 'congestion', 'routing'],
+  incident:  ['incident', 'report', 'summary'],
+  traffic:   ['traffic', 'flow', 'bottleneck'],
+  food:      ['food', 'court', 'catering'],
+  sustain:   ['sustain', 'eco', 'recycle'],
+} as const;
+
+const FAN_KEYWORDS = {
+  accessibility: ['wheelchair', 'disabled', 'ramp'],
+  navigation:    ['gate', 'navigate', 'route', 'crowd', 'section'],
+  food:          ['food', 'eat', 'halal', 'drink', 'restaurant'],
+  schedule:      ['match', 'schedule', 'time', 'kickoff', 'score'],
+  transport:     ['bus', 'metro', 'transport', 'shuttle', 'train'],
+  lift:          ['lift'],
+  emergency:     ['medical', 'emergency', 'help', 'sos', 'first aid'],
+  sustain:       ['sustain', 'eco', 'recycle', 'green'],
+} as const;
 
 // ── Gemini client (lazy-initialised so missing key doesn't crash the server) ──
 let geminiModel: ReturnType<InstanceType<typeof GoogleGenerativeAI>['getGenerativeModel']> | null = null;
 
-const initGemini = () => {
+/**
+ * Lazily initialises the Gemini generative model using the GEMINI_API_KEY
+ * environment variable. Returns null if the key is missing or invalid.
+ *
+ * @returns A configured Gemini model instance, or null if unavailable.
+ */
+export const initGemini = (): ReturnType<InstanceType<typeof GoogleGenerativeAI>['getGenerativeModel']> | null => {
   const key = process.env.GEMINI_API_KEY;
-  if (!key || key === 'YOUR_GEMINI_API_KEY_HERE') return null;
+  if (!key || key === GEMINI_KEY_PLACEHOLDER) return null;
   try {
     const genAI = new GoogleGenerativeAI(key);
     return genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: GEMINI_MODEL_ID,
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT,        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,       threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
@@ -33,7 +112,15 @@ const initGemini = () => {
 };
 
 // ── System prompt that scopes Gemini to FIFA stadium context ──────────────────
-const buildSystemPrompt = (role: string, language: string): string => `
+/**
+ * Builds a system prompt that scopes the Gemini model to FIFA World Cup 2026
+ * stadium operations, tailored to a specific role and language.
+ *
+ * @param role     - The user role: 'fan' or 'staff'.
+ * @param language - The ISO 639-1 language code (e.g. 'en', 'es', 'fr').
+ * @returns A trimmed system prompt string.
+ */
+export const buildSystemPrompt = (role: string, language: string): string => `
 You are MatchDay AI, the official FIFA World Cup 2026 Smart Assistant embedded in the Smart Assist platform.
 
 CONTEXT:
@@ -68,11 +155,14 @@ RULES:
 `.trim();
 
 // ── Mock fallback engine ──────────────────────────────────────────────────────
-type Category = 'navigation' | 'food' | 'schedule' | 'transport' | 'accessibility' |
-                'emergency' | 'staff_crowd' | 'staff_incident' | 'staff_traffic' |
-                'staff_food' | 'sustainability' | 'default';
+/** Valid response category names */
+export type Category =
+  | 'navigation' | 'food' | 'schedule' | 'transport' | 'accessibility'
+  | 'emergency' | 'staff_crowd' | 'staff_incident' | 'staff_traffic'
+  | 'staff_food' | 'sustainability' | 'default';
 
-const MOCK_FAN: Record<Category, string> = {
+/** Mock responses keyed by category, used as fallback when Gemini is unavailable */
+export const MOCK_FAN: Record<Category, string> = {
   navigation:    '🗺️ To avoid Gate C (85% congested), head to **Gate D** — currently at 42% with < 2 min wait.\n\nRoute: Take the East Concourse via the green-lit tunnel → Lift B → your section.\n\nEstimated time: 6 minutes.',
   food:          '🍔 Nearest food options near you:\n• **Global Kitchen** (Halal) — Section 112 · ⭐ 4.7 · 5 min wait\n• **Dubai Bites** (Halal) — Section 204 · ⭐ 4.5 · 3 min wait\n• **Green Zone** (Vegetarian) — Section 108\n\nAll accept FIFA Pay & contactless payments.',
   schedule:      '⚽ **LIVE NOW: Argentina 🇦🇷 2–1 France 🇫🇷**\n📍 MetLife Stadium, New York · 68\' — 2nd Half\n\n🗓️ Next: Spain vs Germany — 3rd Place — July 18, 15:00\n📍 AT&T Stadium, Dallas',
@@ -87,7 +177,8 @@ const MOCK_FAN: Record<Category, string> = {
   default:        '👋 I\'m **MatchDay AI** — your FIFA World Cup 2026 Smart Assistant!\n\nI can help with:\n🗺️ Stadium navigation & crowd routing\n🍔 Food & beverage locations\n⚽ Live scores & match schedule\n🚌 Transport & shuttle timings\n♿ Accessible routes & services\n🆘 Emergency & medical assistance\n\nWhat do you need? Just ask in any language!',
 };
 
-const MOCK_MULTILINGUAL: Record<string, string> = {
+/** Mock multilingual responses keyed by ISO 639-1 language code */
+export const MOCK_MULTILINGUAL: Record<string, string> = {
   es: '¡Hola! Para evitar la congestión en la Puerta C (85%), te recomiendo la **Puerta D** (42%, espera < 2 min). Sigue las señales verdes hacia el corredor Este. El transbordador #7 sale a las 14:40 desde la Plaza Sur. ¿En qué más puedo ayudarte?',
   fr: 'Bonjour! Pour éviter la Porte C (85%), utilisez la **Porte D** (42%, attente < 2 min). Suivez les panneaux verts vers le couloir Est. La navette #7 part à 14h40 depuis la Plaza Sud. Comment puis-je vous aider?',
   pt: 'Olá! Para evitar o Portão C (85%), use o **Portão D** (42%, espera < 2 min). Siga as placas verdes para o corredor Leste. O ônibus #7 sai às 14:40 da Praça Sul. Como posso ajudar?',
@@ -98,26 +189,34 @@ const MOCK_MULTILINGUAL: Record<string, string> = {
 };
 
 /**
- * Categorises a user message to select the best mock response.
+ * Categorises a user message into a response category for the mock engine.
+ * Uses pre-compiled keyword sets for efficient O(k) classification.
+ *
+ * @param message - The raw user message string.
+ * @param role    - The user role: 'fan' | 'staff'.
+ * @returns The best-matching {@link Category} string.
  */
-const categorize = (message: string, role: string): Category => {
+export const categorize = (message: string, role: string): Category => {
   const m = message.toLowerCase();
+
   if (role === 'staff') {
-    if (m.includes('crowd') || m.includes('density') || m.includes('congestion') || m.includes('routing')) return 'staff_crowd';
-    if (m.includes('incident') || m.includes('report') || m.includes('summary'))                          return 'staff_incident';
-    if (m.includes('traffic') || m.includes('flow') || m.includes('bottleneck'))                          return 'staff_traffic';
-    if (m.includes('food') || m.includes('court') || m.includes('catering'))                              return 'staff_food';
-    if (m.includes('sustain') || m.includes('eco') || m.includes('recycle'))                              return 'sustainability';
+    if (STAFF_KEYWORDS.crowd.some(k => m.includes(k)))    return 'staff_crowd';
+    if (STAFF_KEYWORDS.traffic.some(k => m.includes(k)))  return 'staff_traffic';
+    if (STAFF_KEYWORDS.food.some(k => m.includes(k)))     return 'staff_food';
+    if (STAFF_KEYWORDS.sustain.some(k => m.includes(k)))  return 'sustainability';
+    if (STAFF_KEYWORDS.incident.some(k => m.includes(k))) return 'staff_incident';
     return 'staff_crowd';
   }
-  if (m.includes('wheelchair') || m.includes('disabled') || m.includes('ramp') || (m.includes('access') && !m.includes('food'))) return 'accessibility';
-  if (m.includes('gate') || m.includes('navigate') || m.includes('route') || m.includes('crowd') || m.includes('section'))       return 'navigation';
-  if (m.includes('food') || m.includes('eat') || m.includes('halal') || m.includes('drink') || m.includes('restaurant'))         return 'food';
-  if (m.includes('match') || m.includes('schedule') || m.includes('time') || m.includes('kickoff') || m.includes('score'))       return 'schedule';
-  if (m.includes('bus') || m.includes('metro') || m.includes('transport') || m.includes('shuttle') || m.includes('train'))       return 'transport';
-  if (m.includes('lift'))                                                                                                          return 'accessibility';
-  if (m.includes('medical') || m.includes('emergency') || m.includes('help') || m.includes('sos') || m.includes('first aid'))    return 'emergency';
-  if (m.includes('sustain') || m.includes('eco') || m.includes('recycle') || m.includes('green'))                                return 'sustainability';
+
+  if (FAN_KEYWORDS.accessibility.some(k => m.includes(k))) return 'accessibility';
+  if (m.includes('access') && !m.includes('food'))          return 'accessibility';
+  if (FAN_KEYWORDS.navigation.some(k => m.includes(k)))    return 'navigation';
+  if (FAN_KEYWORDS.food.some(k => m.includes(k)))          return 'food';
+  if (FAN_KEYWORDS.schedule.some(k => m.includes(k)))      return 'schedule';
+  if (FAN_KEYWORDS.transport.some(k => m.includes(k)))     return 'transport';
+  if (FAN_KEYWORDS.lift.some(k => m.includes(k)))          return 'accessibility';
+  if (FAN_KEYWORDS.emergency.some(k => m.includes(k)))     return 'emergency';
+  if (FAN_KEYWORDS.sustain.some(k => m.includes(k)))       return 'sustainability';
   return 'default';
 };
 
@@ -125,40 +224,70 @@ const categorize = (message: string, role: string): Category => {
 
 /**
  * Generates a contextual, role-aware AI response using Gemini or the mock fallback.
- * @param message  - The user's raw message.
- * @param role     - 'fan' | 'staff'
- * @param language - ISO 639-1 code ('en', 'es', 'fr', ...)
+ *
+ * The function first checks the in-memory response cache. On a cache miss it
+ * attempts a live Gemini call; if that fails (or no API key is configured), it
+ * falls back to the deterministic mock engine. Successful responses are cached
+ * for {@link CACHE_TTL_MS} milliseconds.
+ *
+ * @param message  - The user's raw message (must be non-empty after trimming).
+ * @param role     - User role: 'fan' | 'staff'. Defaults to 'fan'.
+ * @param language - ISO 639-1 language code (e.g. 'en', 'es'). Defaults to 'en'.
+ * @returns A promise that resolves to the AI-generated or mock response string.
+ * @throws Never — all errors are caught and the mock fallback is used instead.
  */
 export const generateChatResponse = async (
   message: string,
   role: string,
   language: string,
 ): Promise<string> => {
-  // Lazy-init Gemini model
+  const safeRole = role || DEFAULT_ROLE;
+  const safeLang = language || DEFAULT_LANGUAGE;
+  const trimmed  = message.trim();
+
+  // Return default for empty messages
+  if (!trimmed) return MOCK_FAN.default;
+
+  const cacheKey = `${safeRole}:${safeLang}:${trimmed.toLowerCase()}`;
+
+  // ── Cache hit ────────────────────────────────────────────────────────────────
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
+  // ── Lazy-init Gemini model ───────────────────────────────────────────────────
   if (!geminiModel) geminiModel = initGemini();
 
   // ── GEMINI PATH ────────────────────────────────────────────────────────────
   if (geminiModel) {
     try {
-      const systemPrompt = buildSystemPrompt(role, language);
-      const userPrompt = language !== 'en'
-        ? `[User message in ${language}]: ${message}\n\nIMPORTANT: Reply entirely in ${language}.`
-        : message;
+      const systemPrompt = buildSystemPrompt(safeRole, safeLang);
+      const userPrompt = safeLang !== 'en'
+        ? `[User message in ${safeLang}]: ${trimmed}\n\nIMPORTANT: Reply entirely in ${safeLang}.`
+        : trimmed;
 
       const result = await geminiModel.generateContent(`${systemPrompt}\n\nUser: ${userPrompt}`);
       const text = result.response.text().trim();
-      if (text) return text;
+      if (text) {
+        setCached(cacheKey, text);
+        return text;
+      }
     } catch (err) {
-      // Log and fall through to mock
-      console.warn('[AIService] Gemini call failed, using mock fallback:', (err as Error).message);
+      // Log and fall through to mock fallback
+      logger.warn('Gemini call failed — using mock fallback', { reason: (err as Error).message });
     }
   }
 
   // ── MOCK FALLBACK PATH ────────────────────────────────────────────────────
+  let response: string;
+
   // Return localised mock for non-English fan queries
-  if (role === 'fan' && language !== 'en' && MOCK_MULTILINGUAL[language]) {
-    return MOCK_MULTILINGUAL[language]!;
+  if (safeRole === 'fan' && safeLang !== 'en' && MOCK_MULTILINGUAL[safeLang]) {
+    response = MOCK_MULTILINGUAL[safeLang]!;
+  } else {
+    const category = categorize(trimmed, safeRole);
+    response = MOCK_FAN[category];
   }
-  const category = categorize(message, role);
-  return MOCK_FAN[category];
+
+  setCached(cacheKey, response);
+  return response;
 };

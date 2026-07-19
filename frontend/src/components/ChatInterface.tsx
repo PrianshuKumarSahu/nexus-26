@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 
 interface Message {
   id: string;
@@ -11,6 +11,7 @@ interface ChatInterfaceProps {
   role: 'fan' | 'staff';
 }
 
+/** Language options available in the chat interface */
 const LANGUAGE_OPTIONS = [
   { code: 'en', label: 'English',    flag: '🇬🇧' },
   { code: 'es', label: 'Español',    flag: '🇪🇸' },
@@ -20,8 +21,9 @@ const LANGUAGE_OPTIONS = [
   { code: 'de', label: 'Deutsch',    flag: '🇩🇪' },
   { code: 'ja', label: '日本語',      flag: '🇯🇵' },
   { code: 'zh', label: '中文',        flag: '🇨🇳' },
-];
+] as const;
 
+/** Pre-built quick query prompts shown below the chat window */
 const QUICK_QUERIES = [
   { label: '🚦 Avoid crowds',    text: 'Which gate has the least crowd right now?' },
   { label: '🍔 Find food',       text: 'Where can I find halal food near my section?' },
@@ -29,13 +31,26 @@ const QUICK_QUERIES = [
   { label: '🚌 Transport',       text: 'How do I get to the nearest metro station?' },
   { label: '♿ Accessibility',   text: 'What is the accessible route to Section 114?' },
   { label: '🆘 Emergency help',  text: 'Where is the nearest medical station?' },
-];
+] as const;
+
+/** Maximum allowed character count for chat input */
+const MAX_CHARS = 500;
+
+/** API endpoint for the chat service */
+const CHAT_API_URL = 'http://localhost:3001/api/chat';
 
 /**
- * Fully redesigned AI chat interface with multilingual support, quick queries,
+ * AI chat interface with multilingual support, quick queries,
  * typing indicator, and smooth message animations.
+ *
+ * Performance: constants are hoisted outside the component to prevent
+ * re-creation on every render. Handlers are memoised with useCallback.
+ * An AbortController cancels in-flight requests on component unmount.
+ *
+ * @param props.role - User role ('fan' | 'staff') — controls the AI prompt context.
+ * @returns The fully rendered chat interface JSX.
  */
-export default function ChatInterface({ role }: ChatInterfaceProps) {
+const ChatInterface = memo(function ChatInterface({ role }: ChatInterfaceProps): React.JSX.Element {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '0',
@@ -46,21 +61,32 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
       timestamp: new Date(),
     },
   ]);
-  const [input, setInput] = useState('');
+  const [input, setInput]       = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [language, setLanguage] = useState('en');
+  const [language, setLanguage]   = useState('en');
   const [charCount, setCharCount] = useState(0);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef       = useRef<HTMLTextAreaElement>(null);
+  const abortRef       = useRef<AbortController | null>(null);
 
-  const MAX_CHARS = 500;
-
+  // Scroll to bottom whenever messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  /** Send message to backend and append AI response */
-  const handleSend = async () => {
+  // Abort in-flight fetch requests on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  /**
+   * Sends the current input message to the backend and appends the AI response.
+   * Uses AbortController to support cancellation on unmount.
+   */
+  const handleSend = useCallback(async (): Promise<void> => {
     const trimmed = input.trim();
     if (!trimmed || isLoading) return;
 
@@ -76,13 +102,18 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
     setCharCount(0);
     setIsLoading(true);
 
+    // Cancel any previous in-flight request
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+
     try {
-      const res = await fetch('http://localhost:3001/api/chat', {
+      const res = await fetch(CHAT_API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: trimmed, role, language }),
+        signal: abortRef.current.signal,
       });
-      const data = await res.json();
+      const data = await res.json() as { response?: string };
       setMessages(prev => [
         ...prev,
         {
@@ -92,7 +123,9 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
           timestamp: new Date(),
         },
       ]);
-    } catch {
+    } catch (err) {
+      // Ignore abort errors (component unmounted)
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setMessages(prev => [
         ...prev,
         {
@@ -105,22 +138,53 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [input, isLoading, role, language]);
 
-  const handleQuickQuery = (text: string) => {
+  /**
+   * Populates the input field with a pre-built quick query text.
+   * @param text - The query text to inject into the input.
+   */
+  const handleQuickQuery = useCallback((text: string): void => {
     setInput(text);
     setCharCount(text.length);
     inputRef.current?.focus();
-  };
+  }, []);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  /**
+   * Handles keyboard events in the textarea.
+   * Sends the message on Enter (without Shift) for single-line submission.
+   *
+   * @param e - The React keyboard event.
+   */
+  const handleKeyDown = useCallback((e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
-  };
+  }, [handleSend]);
 
-  const selectedLang = LANGUAGE_OPTIONS.find(l => l.code === language) ?? LANGUAGE_OPTIONS[0]!;
+  /**
+   * Updates the input value and character count on every keystroke.
+   * @param e - The React change event from the textarea.
+   */
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>): void => {
+    setInput(e.target.value);
+    setCharCount(e.target.value.length);
+  }, []);
+
+  /**
+   * Updates the selected language when the user changes the language selector.
+   * @param e - The React change event from the select element.
+   */
+  const handleLanguageChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>): void => {
+    setLanguage(e.target.value);
+  }, []);
+
+  /** The currently selected language option object */
+  const selectedLang = useMemo(
+    () => LANGUAGE_OPTIONS.find(l => l.code === language) ?? LANGUAGE_OPTIONS[0],
+    [language],
+  );
 
   return (
     <div style={{ maxWidth: '900px', margin: '0 auto', padding: '32px 24px 80px', minHeight: '100vh' }}>
@@ -147,6 +211,8 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
             <button
               key={lang.code}
               onClick={() => setLanguage(lang.code)}
+              aria-label={`Switch to ${lang.label}`}
+              aria-pressed={language === lang.code}
               style={{
                 background: language === lang.code ? 'rgba(0,230,118,0.15)' : 'var(--surface)',
                 border: language === lang.code ? '1px solid var(--primary)' : '1px solid var(--border)',
@@ -164,8 +230,9 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
           ))}
           <select
             value={language}
-            onChange={e => setLanguage(e.target.value)}
+            onChange={handleLanguageChange}
             className="select-field"
+            aria-label="Select language"
             style={{ padding: '7px 10px', fontSize: '13px' }}
           >
             {LANGUAGE_OPTIONS.map(l => (
@@ -196,7 +263,7 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: '20px', boxShadow: '0 0 15px var(--primary-glow)',
             flexShrink: 0,
-          }}>
+          }} aria-hidden="true">
             🤖
           </div>
           <div>
@@ -213,18 +280,22 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
         {/* Messages */}
         <div
           className="scroll-inner"
-          style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}
+          role="log"
           aria-live="polite"
+          aria-label="Chat messages"
+          style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}
         >
           {messages.map(msg => (
             <div key={msg.id} style={{ display: 'flex', justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start' }}>
               {msg.sender === 'ai' && (
-                <div style={{
-                  width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
-                  background: 'linear-gradient(135deg, var(--primary), var(--cyan))',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: '14px', marginRight: '8px', alignSelf: 'flex-end',
-                }}>🤖</div>
+                <div
+                  aria-hidden="true"
+                  style={{
+                    width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
+                    background: 'linear-gradient(135deg, var(--primary), var(--cyan))',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '14px', marginRight: '8px', alignSelf: 'flex-end',
+                  }}>🤖</div>
               )}
               <div>
                 <div className={msg.sender === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'}>
@@ -243,8 +314,8 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
 
           {/* Typing indicator */}
           {isLoading && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }} aria-label="AI is thinking">
+              <div aria-hidden="true" style={{
                 width: '28px', height: '28px', borderRadius: '50%',
                 background: 'linear-gradient(135deg, var(--primary), var(--cyan))',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px',
@@ -269,18 +340,22 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
               <textarea
                 ref={inputRef}
                 value={input}
-                onChange={e => { setInput(e.target.value); setCharCount(e.target.value.length); }}
+                onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder={`Ask in ${selectedLang.label}... (Shift+Enter for new line)`}
                 maxLength={MAX_CHARS}
                 rows={1}
                 className="input-field"
+                aria-label="Chat message input"
                 style={{ resize: 'none', paddingRight: '70px', lineHeight: '1.5', minHeight: '44px', maxHeight: '120px' }}
               />
               <span style={{
                 position: 'absolute', right: '10px', bottom: '10px',
                 fontSize: '11px', color: charCount > MAX_CHARS * 0.9 ? 'var(--red)' : 'var(--text-muted)',
-              }}>
+              }}
+                aria-live="polite"
+                aria-label={`${charCount} of ${MAX_CHARS} characters used`}
+              >
                 {charCount}/{MAX_CHARS}
               </span>
             </div>
@@ -308,12 +383,13 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
         <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '12px', fontFamily: "'Rajdhani', sans-serif" }}>
           Quick Queries
         </p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-          {QUICK_QUERIES.map((q, i) => (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }} role="group" aria-label="Quick query suggestions">
+          {QUICK_QUERIES.map((q) => (
             <button
-              key={i}
+              key={q.label}
               onClick={() => handleQuickQuery(q.text)}
               className="btn-glass"
+              aria-label={`Quick query: ${q.text}`}
               style={{ padding: '8px 14px', fontSize: '13px', borderRadius: '10px' }}
             >
               {q.label}
@@ -323,4 +399,6 @@ export default function ChatInterface({ role }: ChatInterfaceProps) {
       </div>
     </div>
   );
-}
+});
+
+export default ChatInterface;

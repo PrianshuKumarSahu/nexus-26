@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import Navbar from './components/Navbar';
 import HeroSection from './components/HeroSection';
 import ChatInterface from './components/ChatInterface';
@@ -15,31 +15,42 @@ type ViewType = 'home' | 'chat' | 'map' | 'schedule' | 'transport' | 'staff' | '
 /**
  * Root application component.
  * Manages top-level view routing between fan and staff modes.
+ *
+ * @returns The full application layout including navbar, ticker, and active view.
  */
 function App() {
   const [activeView, setActiveView] = useState<ViewType>('home');
   const [role, setRole] = useState<'fan' | 'staff'>('fan');
 
-  /** Navigate to a view and update the role context if needed */
-  const navigateTo = useCallback((view: ViewType) => {
+  /**
+   * Navigates to the specified view and updates the role context accordingly.
+   * Staff view sets role to 'staff'; all other views set role to 'fan'.
+   *
+   * @param view - The target view to navigate to.
+   */
+  const navigateTo = useCallback((view: ViewType): void => {
     setActiveView(view);
     if (view === 'staff') setRole('staff');
     else setRole('fan');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  const renderView = () => {
+  /**
+   * Renders the component for the currently active view.
+   * Memoised to prevent unnecessary re-renders when unrelated state changes.
+   */
+  const renderedView = useMemo((): React.JSX.Element => {
     switch (activeView) {
-      case 'home':         return <HeroSection onNavigate={navigateTo} />;
-      case 'chat':         return <ChatInterface role={role} />;
-      case 'map':          return <StadiumMap />;
-      case 'schedule':     return <MatchSchedule />;
-      case 'transport':    return <TransportHub />;
-      case 'staff':        return <StaffDashboard />;
-      case 'accessibility':return <AccessibilityPanel />;
-      default:             return <HeroSection onNavigate={navigateTo} />;
+      case 'home':          return <HeroSection onNavigate={navigateTo} />;
+      case 'chat':          return <ChatInterface role={role} />;
+      case 'map':           return <StadiumMap />;
+      case 'schedule':      return <MatchSchedule />;
+      case 'transport':     return <TransportHub />;
+      case 'staff':         return <StaffDashboard />;
+      case 'accessibility': return <AccessibilityPanel />;
+      default:              return <HeroSection onNavigate={navigateTo} />;
     }
-  };
+  }, [activeView, role, navigateTo]);
 
   return (
     <div style={{ minHeight: '100vh', position: 'relative', zIndex: 1 }}>
@@ -51,7 +62,7 @@ function App() {
         onRoleChange={setRole}
       />
       <main style={{ paddingTop: activeView === 'home' ? '0' : '80px' }}>
-        {renderView()}
+        {renderedView}
       </main>
     </div>
   );
