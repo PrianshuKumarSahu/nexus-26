@@ -62,6 +62,14 @@ export const clearResponseCache = (): void => {
   responseCache.clear();
 };
 
+/**
+ * Resets the lazily initialised Gemini model.
+ * Useful for testing to ensure a clean state between runs.
+ */
+export const resetGeminiModel = (): void => {
+  geminiModel = null;
+};
+
 // ── Keyword patterns pre-compiled for efficiency ──────────────────────────────
 /** Pre-compiled keyword sets for categorisation — avoids re-creation on every call */
 const STAFF_KEYWORDS = {

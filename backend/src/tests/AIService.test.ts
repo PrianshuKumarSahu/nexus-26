@@ -8,15 +8,39 @@ import {
   generateChatResponse,
   categorize,
   clearResponseCache,
+  resetGeminiModel,
   MOCK_FAN,
   MOCK_MULTILINGUAL,
   type Category,
 } from '../services/AIService';
 
+// Mock the Google Generative AI SDK
+jest.mock('@google/generative-ai', () => {
+  return {
+    GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
+      getGenerativeModel: jest.fn().mockReturnValue({
+        generateContent: jest.fn().mockResolvedValue({
+          response: { text: () => 'Mocked Gemini Response' }
+        })
+      })
+    })),
+    HarmCategory: {
+      HARM_CATEGORY_HARASSMENT: 'HARM_CATEGORY_HARASSMENT',
+      HARM_CATEGORY_HATE_SPEECH: 'HARM_CATEGORY_HATE_SPEECH',
+      HARM_CATEGORY_SEXUALLY_EXPLICIT: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+      HARM_CATEGORY_DANGEROUS_CONTENT: 'HARM_CATEGORY_DANGEROUS_CONTENT',
+    },
+    HarmBlockThreshold: {
+      BLOCK_MEDIUM_AND_ABOVE: 'BLOCK_MEDIUM_AND_ABOVE',
+    }
+  };
+});
+
 // Ensure we always use the mock fallback in tests (no real API key)
 beforeEach(() => {
   delete process.env.GEMINI_API_KEY;
   clearResponseCache();
+  resetGeminiModel();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -326,6 +350,87 @@ describe('generateChatResponse()', () => {
       const second = await generateChatResponse('Where is food?', 'fan', 'en');
       // Both should be equal (same mock) but cache was cleared
       expect(first).toBe(second);
+    });
+
+    it('expires cache correctly after TTL', async () => {
+      jest.useFakeTimers();
+      
+      const first = await generateChatResponse('Where is the medical station?', 'fan', 'en');
+      
+      // Advance time by 6 minutes (TTL is 5 minutes)
+      jest.advanceTimersByTime(6 * 60 * 1000);
+      
+      // Request again, should miss cache and fetch new (which is the same mock)
+      const second = await generateChatResponse('Where is the medical station?', 'fan', 'en');
+      expect(first).toBe(second);
+      
+      jest.useRealTimers();
+    });
+  });
+
+  describe('Gemini Integration', () => {
+    let originalEnv: NodeJS.ProcessEnv;
+
+    beforeEach(() => {
+      originalEnv = { ...process.env };
+      process.env.GEMINI_API_KEY = 'test-key';
+      resetGeminiModel();
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('returns a successful response from Gemini and caches it', async () => {
+      const res = await generateChatResponse('Where is Gate D?', 'fan', 'en');
+      expect(res).toBe('Mocked Gemini Response');
+    });
+
+    it('handles translation instruction properly for non-en language', async () => {
+      const res = await generateChatResponse('Where is Gate D?', 'fan', 'es');
+      expect(res).toBe('Mocked Gemini Response');
+    });
+
+    it('falls back to mock if Gemini fails', async () => {
+      // Temporarily mock the SDK to throw an error
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const mockGenerateContent = jest.fn().mockRejectedValue(new Error('API Error'));
+      GoogleGenerativeAI.mockImplementationOnce(() => ({
+        getGenerativeModel: jest.fn().mockReturnValue({
+          generateContent: mockGenerateContent
+        })
+      }));
+
+      const res = await generateChatResponse('Where is Gate D?', 'fan', 'en');
+      // Should fall back to MOCK_FAN.navigation
+      expect(res).toContain('To avoid Gate C');
+    });
+
+    it('handles Gemini returning an empty text string', async () => {
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const mockGenerateContent = jest.fn().mockResolvedValue({
+        response: { text: () => '' }
+      });
+      GoogleGenerativeAI.mockImplementationOnce(() => ({
+        getGenerativeModel: jest.fn().mockReturnValue({
+          generateContent: mockGenerateContent
+        })
+      }));
+
+      const res = await generateChatResponse('Where is Gate D?', 'fan', 'en');
+      // Should fall back to MOCK_FAN.navigation because the returned text was empty
+      expect(res).toContain('To avoid Gate C');
+    });
+
+    it('initGemini returns null when initialization throws', () => {
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      GoogleGenerativeAI.mockImplementationOnce(() => {
+        throw new Error('Init Error');
+      });
+      
+      const { initGemini } = require('../services/AIService');
+      const res = initGemini();
+      expect(res).toBeNull();
     });
   });
 });

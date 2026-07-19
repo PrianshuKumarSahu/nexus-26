@@ -26,10 +26,10 @@ module.exports = {
   // Per-file overrides are used to reflect this accurately.
   coverageThreshold: {
     global: {
-      branches:   75,
-      functions:  90,
-      lines:      80,  // AIService Gemini path requires a live API key — untestable in CI
-      statements: 85,
+      branches:   95,
+      functions:  100,
+      lines:      100,
+      statements: 100,
     },
     './src/utils/validation.ts': {
       branches:   90,
